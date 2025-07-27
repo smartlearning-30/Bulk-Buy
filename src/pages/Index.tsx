@@ -1,12 +1,12 @@
 import React from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import { useFirebaseAuth } from '@/contexts/FirebaseAuthContext';
 import LoginForm from '@/components/auth/LoginForm';
 import Header from '@/components/layout/Header';
 import VendorDashboard from '@/components/vendor/VendorDashboard';
 import SupplierDashboard from '@/components/supplier/SupplierDashboard';
 
 const Index = () => {
-  const { user } = useAuth();
+  const { user } = useFirebaseAuth();
 
   if (!user) {
     return <LoginForm />;

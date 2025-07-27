@@ -1,73 +1,53 @@
-# Welcome to your Lovable project
+# Bunch Buy Hub - Bulk Buying Platform
 
-## Project info
+A comprehensive platform for vendors and suppliers to collaborate on bulk purchases, enabling cost savings through collective buying power.
 
-**URL**: https://lovable.dev/projects/7b3b93b1-aead-4600-9b24-da5acc9b7244
+## Features
 
-## How can I edit this code?
+- **For Suppliers**: Create group orders with bulk pricing, set minimum quantities and deadlines
+- **For Vendors**: Browse available group orders, join with desired quantities, save money through collective buying
+- **Real-time Tracking**: Monitor order progress, delivery routes, and participant status
+- **Location-based**: Find nearby suppliers and calculate delivery charges based on distance
+- **Review System**: Rate and review completed orders
 
-There are several ways of editing your application.
+## Getting Started
 
-**Use Lovable**
+1. Clone this repository
+2. Install dependencies: `npm install`
+3. Set up Firebase configuration
+4. Start development server: `npm start`
+5. Build for production: `npm run build`
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/7b3b93b1-aead-4600-9b24-da5acc9b7244) and start prompting.
+## Technology Stack
 
-Changes made via Lovable will be committed automatically to this repo.
+- React 18 with TypeScript
+- Firebase (Authentication, Firestore)
+- Vite for build tooling
+- Tailwind CSS for styling
+- Shadcn UI components
+- Leaflet for maps
+- React Router for navigation
 
-**Use your preferred IDE**
+## Project Structure
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```
+src/
+├── components/     # React components
+├── contexts/       # React contexts
+├── hooks/          # Custom hooks
+├── lib/           # Utility libraries
+├── pages/         # Page components
+├── services/      # API services
+└── types/         # TypeScript definitions
 ```
 
-**Edit a file directly in GitHub**
+## Contributing
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
 
-**Use GitHub Codespaces**
+## License
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/7b3b93b1-aead-4600-9b24-da5acc9b7244) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+This project is licensed under the MIT License.

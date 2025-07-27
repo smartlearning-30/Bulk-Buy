@@ -809,6 +809,8 @@ const SupplierDashboard = () => {
     return () => unsubscribe();
   }, [isDeliveryTrackingModalOpen, trackingOrder?.id]);
 
+
+
   return (
     <div className="container mx-auto px-4 py-6 space-y-6">
       {/* Header with Create Order Button */}
@@ -3082,6 +3084,241 @@ const SupplierDashboard = () => {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Create New Order Modal */}
+      <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Create New Group Order</DialogTitle>
+            <DialogDescription>
+              Set up a new bulk buying opportunity for vendors
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCreateOrder} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="item">Item Name</Label>
+              <Input
+                id="item"
+                value={newOrder.item}
+                onChange={(e) => setNewOrder({...newOrder, item: e.target.value})}
+                placeholder="e.g., Onions, Potatoes"
+                className={formErrors.item ? 'border-red-500' : ''}
+              />
+              {formErrors.item && (
+                <p className="text-sm text-red-500">{formErrors.item}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                value={newOrder.description}
+                onChange={(e) => setNewOrder({...newOrder, description: e.target.value})}
+                placeholder="Describe the quality and specifications"
+                rows={3}
+                className={formErrors.description ? 'border-red-500' : ''}
+              />
+              {formErrors.description && (
+                <p className="text-sm text-red-500">{formErrors.description}</p>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="originalPrice">Regular Price (₹)</Label>
+                <Input
+                  id="originalPrice"
+                  type="number"
+                  value={newOrder.originalPrice || ''}
+                  onChange={(e) => setNewOrder({...newOrder, originalPrice: parseFloat(e.target.value) || 0})}
+                  placeholder="40"
+                  min="0"
+                  step="0.01"
+                  className={formErrors.originalPrice ? 'border-red-500' : ''}
+                />
+                {formErrors.originalPrice && (
+                  <p className="text-sm text-red-500">{formErrors.originalPrice}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bulkPrice">Bulk Price (₹)</Label>
+                <Input
+                  id="bulkPrice"
+                  type="number"
+                  value={newOrder.bulkPrice || ''}
+                  onChange={(e) => setNewOrder({...newOrder, bulkPrice: parseFloat(e.target.value) || 0})}
+                  placeholder="30"
+                  min="0"
+                  step="0.01"
+                  className={formErrors.bulkPrice ? 'border-red-500' : ''}
+                />
+                {formErrors.bulkPrice && (
+                  <p className="text-sm text-red-500">{formErrors.bulkPrice}</p>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="unit">Unit</Label>
+                <Input
+                  id="unit"
+                  value={newOrder.unit}
+                  onChange={(e) => setNewOrder({...newOrder, unit: e.target.value})}
+                  placeholder="kg"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="minQuantity">Min Qty</Label>
+                <Input
+                  id="minQuantity"
+                  type="number"
+                  value={newOrder.minQuantity || ''}
+                  onChange={(e) => setNewOrder({...newOrder, minQuantity: parseInt(e.target.value) || 0})}
+                  placeholder="100"
+                  min="1"
+                  className={formErrors.minQuantity ? 'border-red-500' : ''}
+                />
+                {formErrors.minQuantity && (
+                  <p className="text-sm text-red-500">{formErrors.minQuantity}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="maxQuantity">Max Qty</Label>
+                <Input
+                  id="maxQuantity"
+                  type="number"
+                  value={newOrder.maxQuantity || ''}
+                  onChange={(e) => setNewOrder({...newOrder, maxQuantity: parseInt(e.target.value) || 0})}
+                  placeholder="500"
+                  min="1"
+                  className={formErrors.maxQuantity ? 'border-red-500' : ''}
+                />
+                {formErrors.maxQuantity && (
+                  <p className="text-sm text-red-500">{formErrors.maxQuantity}</p>
+                )}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="location">Location Name/Address</Label>
+              <Input
+                id="location"
+                value={newOrder.location}
+                onChange={(e) => setNewOrder({...newOrder, location: e.target.value})}
+                placeholder="e.g., Mumbai Central Market"
+                className={formErrors.location ? 'border-red-500' : ''}
+              />
+              {formErrors.location && (
+                <p className="text-sm text-red-500">{formErrors.location}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="contactPhone">Contact Phone Number *</Label>
+              <Input
+                id="contactPhone"
+                type="tel"
+                value={newOrder.contactPhone}
+                onChange={(e) => {
+                  // Only allow digits and limit to 10 characters
+                  const value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                  setNewOrder({...newOrder, contactPhone: value});
+                }}
+                placeholder="Enter 10-digit mobile number"
+                className={formErrors.contactPhone ? 'border-red-500' : ''}
+                maxLength={10}
+              />
+              {formErrors.contactPhone && (
+                <p className="text-sm text-red-500">{formErrors.contactPhone}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Enter 10-digit mobile number. Vendors will use this number to contact you.
+              </p>
+              {newOrder.contactPhone && newOrder.contactPhone.length !== 10 && (
+                <p className="text-xs text-red-500">
+                  Phone number must be exactly 10 digits
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="deliveryChargePerKm">Delivery Charge per Kilometer (₹)</Label>
+              <Input
+                id="deliveryChargePerKm"
+                type="number"
+                value={newOrder.deliveryChargePerKm || ''}
+                onChange={(e) => setNewOrder({...newOrder, deliveryChargePerKm: parseFloat(e.target.value) || 0})}
+                placeholder="5.00"
+                min="0"
+                step="0.01"
+                className={formErrors.deliveryChargePerKm ? 'border-red-500' : ''}
+              />
+              {formErrors.deliveryChargePerKm && (
+                <p className="text-sm text-red-500">{formErrors.deliveryChargePerKm}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Set the delivery charge per kilometer. This will be used to calculate delivery costs for vendors based on their distance from the delivery location.
+              </p>
+            </div>
+            {/* Map Section */}
+            <div className="space-y-2">
+              <Label>Pick Location on Map *</Label>
+              <UseMyLocationButton onSetLocation={setLocationLatLng} />
+              <div className="rounded-lg border overflow-hidden" style={{ position: 'relative' }}>
+                {isCreateModalOpen && (
+                  <MapContainer
+                    ref={mapRef}
+                    center={(locationLatLng || DEFAULT_CENTER) as LatLngExpression}
+                    zoom={locationLatLng ? 14 : 10}
+                    style={MAP_CONTAINER_STYLE}
+                    scrollWheelZoom={true}
+                  >
+                    <TileLayer
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      attribution="&copy; OpenStreetMap contributors"
+                    />
+                    <LocationPicker value={locationLatLng} onChange={setLocationLatLng} />
+                    {locationLatLng && (
+                      <Marker position={locationLatLng as LatLngExpression} icon={RedIcon} />
+                    )}
+                  </MapContainer>
+                )}
+              </div>
+              {formErrors.map && (
+                <div className="flex items-center gap-2 text-sm text-red-500 mt-2">
+                  <span>❌</span>
+                  <span>{formErrors.map}</span>
+                </div>
+              )}
+              {locationLatLng && (
+                <div className="flex items-center gap-2 text-xs text-green-600 mt-2">
+                  <span>✅</span>
+                  <span>Location selected: Lat: {locationLatLng.lat.toFixed(5)}, Lng: {locationLatLng.lng.toFixed(5)}</span>
+                </div>
+              )}
+              {!locationLatLng && !formErrors.map && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
+                  <MapPin className="w-4 h-4" />
+                  <span>Click on the map or use "Use My Current Location" to select delivery location</span>
+                </div>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="deadline">Deadline</Label>
+              <Input
+                id="deadline"
+                type="date"
+                value={newOrder.deadline}
+                onChange={(e) => setNewOrder({...newOrder, deadline: e.target.value})}
+                min={new Date().toISOString().split('T')[0]}
+                className={formErrors.deadline ? 'border-red-500' : ''}
+              />
+              {formErrors.deadline && (
+                <p className="text-sm text-red-500">{formErrors.deadline}</p>
+              )}
+            </div>
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? "Creating..." : "Create Order"}
+            </Button>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

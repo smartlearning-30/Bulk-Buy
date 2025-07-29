@@ -52,3 +52,18 @@ export interface CreateOrderData {
   deliveryChargePerKm: number;
   contactPhone: string;
 }
+
+export interface Review {
+  id: string;
+  orderId: string;
+  supplierId: string;
+  supplierName: string;
+  vendorId: string;
+  vendorName: string;
+  orderItem: string;
+  rating: number;
+  comment: string;
+  createdAt: string;
+  orderQuantity: string;
+  orderValue: string;
+}

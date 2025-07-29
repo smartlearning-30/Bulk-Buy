@@ -9,10 +9,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useFirebaseAuth } from '@/contexts/FirebaseAuthContext';
 import { useFirebaseOrders } from '@/hooks/useFirebaseOrders';
-import { participantService, groupOrderService, userService, onParticipantsSnapshot } from '@/services/firebaseService';
-import { CreateOrderData, GroupOrder } from '@/types';
+import { participantService, groupOrderService, userService, onParticipantsSnapshot, reviewService } from '@/services/firebaseService';
+import { CreateOrderData, GroupOrder, Review } from '@/types';
 import { calculateDistance } from '@/lib/utils';
-import { Plus, Package, Users, TrendingUp, Calendar, MapPin, Loader2, RefreshCw, BarChart3, ShoppingCart, Phone, Mail, User, Clock, PieChart, Activity, CheckCircle, Edit, X, Star, Route, Navigation, Truck, Trash2 } from 'lucide-react';
+import { Plus, Package, Users, TrendingUp, Calendar, MapPin, Loader2, RefreshCw, BarChart3, ShoppingCart, Phone, Mail, User, Clock, PieChart, Activity, CheckCircle, Edit, X, Star, Route, Navigation, Truck, Trash2, Receipt } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import {
   Dialog,
@@ -28,8 +28,19 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { MapContainer, TileLayer, Marker, useMapEvents, Polyline } from 'react-leaflet';
 import L, { LatLngExpression, Icon, Map as LeafletMap, DivIcon } from 'leaflet';
+import { useTheme } from '@/App';
 
 const DEFAULT_CENTER = { lat: 19.076, lng: 72.8777 }; // Mumbai as default
 const MAP_CONTAINER_STYLE = { width: '100%', height: '250px', borderRadius: '12px' };
@@ -107,14 +118,14 @@ const AnalyticsCard = ({ title, value, icon: Icon, color }: {
   color: string;
 }) => (
   <Card>
-    <CardContent className="p-6">
+    <CardContent className="p-6 bg-white dark:bg-zinc-900">
       <div className="flex items-center gap-3">
         <div className={`w-12 h-12 ${color} rounded-xl flex items-center justify-center`}>
           <Icon className="w-6 h-6 text-white" />
         </div>
         <div>
-          <p className="text-2xl font-bold text-foreground">{value}</p>
-          <p className="text-sm text-muted-foreground">{title}</p>
+          <p className="text-2xl font-bold text-foreground dark:text-white">{value}</p>
+          <p className="text-sm text-muted-foreground dark:text-zinc-300">{title}</p>
         </div>
       </div>
     </CardContent>
@@ -123,9 +134,6 @@ const AnalyticsCard = ({ title, value, icon: Icon, color }: {
 
 const SupplierDashboard = () => {
   const { user } = useFirebaseAuth();
-  console.log('SupplierDashboard: Current user:', user);
-  console.log('SupplierDashboard: User ID:', user?.id);
-  console.log('SupplierDashboard: User email:', user?.email);
   const { orders, createOrder, updateOrder, isLoading } = useFirebaseOrders();
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -139,8 +147,17 @@ const SupplierDashboard = () => {
   const [completingOrder, setCompletingOrder] = useState<GroupOrder | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deletingOrder, setDeletingOrder] = useState<GroupOrder | null>(null);
+  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
+  const [receiptOrder, setReceiptOrder] = useState<GroupOrder | null>(null);
+  const [reviewToDelete, setReviewToDelete] = useState<Review | null>(null);
+  const [isDeletingReview, setIsDeletingReview] = useState(false);
   const [reviewProductFilter, setReviewProductFilter] = useState('');
   const [reviewRatingFilter, setReviewRatingFilter] = useState<number | null>(null);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [isLoadingReviews, setIsLoadingReviews] = useState(false);
+  
+
+  
   const [newOrder, setNewOrder] = useState<CreateOrderData>({
     item: '',
     description: '',
@@ -151,7 +168,7 @@ const SupplierDashboard = () => {
     unit: 'kg',
     deadline: '',
     location: '',
-    deliveryChargePerKm: 0,
+    deliveryChargePerKm: 5,
     contactPhone: ''
   });
   const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
@@ -161,8 +178,18 @@ const SupplierDashboard = () => {
   const [deliveryRoutes, setDeliveryRoutes] = useState<{ [vendorId: string]: any[] }>({});
   const [isLoadingRoutes, setIsLoadingRoutes] = useState(false);
   const mapRef = useRef<LeafletMap | null>(null);
+  const { theme } = useTheme();
 
-
+  useEffect(() => {
+    if (theme === 'dark' && !(window as any).__darkModeToastShown) {
+      toast({
+        title: 'Dark Mode Notice',
+        description: 'Some colors may not be updated properly in dark mode. We are working to improve the experience.',
+        variant: 'destructive',
+      });
+      (window as any).__darkModeToastShown = true;
+    }
+  }, [theme]);
 
   // Filter orders for current supplier using real-time data
   const myOrders = orders.filter(order => order.supplierId === user?.id);
@@ -180,58 +207,20 @@ const SupplierDashboard = () => {
     return comments[Math.floor(Math.random() * comments.length)];
   };
 
-  // Generate reviews from completed orders with vendor data
-  const reviews = React.useMemo(() => {
-    const reviewData: Array<{
-      id: string;
-      orderId: string;
-      orderItem: string;
-      vendorName: string;
-      vendorId: string;
-      rating: number;
-      comment: string;
-      createdAt: string;
-      orderQuantity: string;
-      orderValue: string;
-    }> = [];
+  // Fetch real reviews from Firebase
+  React.useEffect(() => {
+    if (!user?.id) return;
 
-    // Get completed orders for this supplier
-    const completedOrders = myOrders.filter(order => order.status === 'completed');
+    setIsLoadingReviews(true);
     
-    completedOrders.forEach((order, index) => {
-      // For each participant in the order, create a review
-      order.participants.forEach((participant, participantIndex) => {
-        // Generate a unique review for each vendor
-        const reviewId = `${order.id}-${participant.vendorId}`;
-        
-        // Generate realistic review data based on the order
-        const review = {
-          id: reviewId,
-          orderId: order.id,
-          orderItem: order.item,
-          vendorName: participant.vendorName,
-          vendorId: participant.vendorId,
-          rating: Math.floor(Math.random() * 2) + 4, // 4-5 stars for demo
-          comment: generateReviewComment(order.item, participant.quantity, order.unit),
-          createdAt: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // Random date within last 7 days
-          orderQuantity: `${participant.quantity} ${order.unit}`,
-          orderValue: `₹${(participant.quantity * order.bulkPrice).toFixed(0)}`
-        };
-        
-        reviewData.push(review);
-      });
+    // Set up real-time listener for reviews
+    const unsubscribe = reviewService.onReviewsBySupplierSnapshot(user.id, (reviews) => {
+      setReviews(reviews);
+      setIsLoadingReviews(false);
     });
 
-    // Remove duplicate reviews by orderId and vendorId
-    const uniqueReviews = new Map();
-    reviewData.forEach((review) => {
-      const key = `${review.orderId}-${review.vendorId}`;
-      if (!uniqueReviews.has(key)) {
-        uniqueReviews.set(key, review);
-      }
-    });
-    return Array.from(uniqueReviews.values());
-  }, [myOrders]);
+    return () => unsubscribe();
+  }, [user?.id]);
 
   // Filter reviews based on product name and rating
   const filteredReviews = React.useMemo(() => {
@@ -334,8 +323,8 @@ const SupplierDashboard = () => {
       errors.contactPhone = 'Phone number must contain only digits';
     }
 
-    if (newOrder.deliveryChargePerKm < 0) {
-      errors.deliveryChargePerKm = 'Delivery charge cannot be negative';
+    if (newOrder.deliveryChargePerKm <= 0) {
+      errors.deliveryChargePerKm = 'Delivery charge is required and must be greater than 0';
     }
 
     if (!newOrder.deadline) {
@@ -384,7 +373,7 @@ const SupplierDashboard = () => {
         unit: 'kg',
         deadline: '',
         location: '',
-        deliveryChargePerKm: 0,
+        deliveryChargePerKm: 5,
         contactPhone: ''
       });
       setFormErrors({});
@@ -406,6 +395,8 @@ const SupplierDashboard = () => {
       variant: "default"
     });
   };
+
+
 
   const handleResetAcceptedOrders = async () => {
     try {
@@ -547,7 +538,7 @@ const SupplierDashboard = () => {
         unit: 'kg',
         deadline: '',
         location: '',
-        deliveryChargePerKm: 0,
+        deliveryChargePerKm: 5,
         contactPhone: ''
       });
       setFormErrors({});
@@ -656,6 +647,39 @@ const SupplierDashboard = () => {
       toast({ title: "Failed to Complete Order", description: "Please try again", variant: "destructive" });
     } finally {
       setIsCompleting(false);
+    }
+  };
+
+  const handleViewReceipt = (order: GroupOrder) => {
+    setReceiptOrder(order);
+    setIsReceiptModalOpen(true);
+  };
+
+  const handleDeleteReview = (review: Review) => {
+    setReviewToDelete(review);
+  };
+
+  const confirmDeleteReview = async () => {
+    if (!reviewToDelete) return;
+
+    setIsDeletingReview(true);
+    try {
+      await reviewService.deleteReview(reviewToDelete.id);
+      toast({
+        title: "Review Deleted",
+        description: "The review has been successfully removed",
+        variant: "default"
+      });
+      setReviewToDelete(null);
+    } catch (error) {
+      console.error('Delete review error:', error);
+      toast({
+        title: "Failed to Delete Review",
+        description: "Please try again",
+        variant: "destructive"
+      });
+    } finally {
+      setIsDeletingReview(false);
     }
   };
 
@@ -859,6 +883,7 @@ const SupplierDashboard = () => {
             <Clock className="w-4 h-4" />
             Check Expired Orders
           </Button>
+
           <Button 
             variant="outline" 
             onClick={handleOpenCreateModal}
@@ -1013,14 +1038,12 @@ const SupplierDashboard = () => {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {myOrders.map((order) => (
-            <Card key={order.id} className={`hover:shadow-lg transition-shadow ${
-              order.status === 'cancelled' ? 'border-l-4 border-l-destructive opacity-75' : ''
-            }`}>
+            <Card key={order.id} className={`hover:shadow-lg transition-shadow ${order.status === 'cancelled' ? 'border-l-4 border-l-destructive opacity-75' : ''} bg-white dark:bg-zinc-900 border border-border dark:border-[#27272a]`}>
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div>
-                    <CardTitle className="text-xl text-foreground">{order.item}</CardTitle>
-                    <CardDescription className="text-muted-foreground">
+                    <CardTitle className="text-xl text-foreground dark:text-white">{order.item}</CardTitle>
+                    <CardDescription className="text-muted-foreground dark:text-zinc-300">
                       Created on {order.createdAt}
                     </CardDescription>
                   </div>
@@ -1031,20 +1054,20 @@ const SupplierDashboard = () => {
               </CardHeader>
               
               <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground">{order.description}</p>
+                <p className="text-sm text-muted-foreground dark:text-zinc-300">{order.description}</p>
                 
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-accent rounded-lg p-3">
-                    <p className="text-sm text-accent-foreground">Bulk Price</p>
-                    <p className="text-2xl font-bold text-primary">₹{order.bulkPrice}</p>
-                    <p className="text-xs text-muted-foreground">per {order.unit}</p>
+                  <div className="bg-accent dark:bg-zinc-800 rounded-lg p-3">
+                    <p className="text-sm text-accent-foreground dark:text-zinc-200">Bulk Price</p>
+                    <p className="text-2xl font-bold text-primary dark:text-blue-300">₹{order.bulkPrice}</p>
+                    <p className="text-xs text-muted-foreground dark:text-zinc-400">per {order.unit}</p>
                   </div>
-                  <div className="bg-muted rounded-lg p-3">
-                    <p className="text-sm text-muted-foreground">Quantity Progress</p>
-                    <p className="text-lg font-bold text-foreground">
+                  <div className="bg-muted dark:bg-zinc-800 rounded-lg p-3">
+                    <p className="text-sm text-muted-foreground dark:text-zinc-300">Quantity Progress</p>
+                    <p className="text-lg font-bold text-foreground dark:text-white">
                       {order.totalQuantity}/{order.minQuantity}
                     </p>
-                    <p className="text-xs text-muted-foreground">{order.unit} ordered</p>
+                    <p className="text-xs text-muted-foreground dark:text-zinc-400">{order.unit} ordered</p>
                   </div>
                 </div>
 
@@ -1100,22 +1123,22 @@ const SupplierDashboard = () => {
 
                 {order.participants.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-sm font-medium text-foreground">Participating Vendors:</p>
+                    <p className="text-sm font-medium text-foreground dark:text-white">Participating Vendors:</p>
                     <div className="space-y-1">
                       {order.participants.map((participant) => (
-                        <div key={participant.id} className="flex justify-between text-xs bg-muted rounded p-2">
-                          <span className="text-muted-foreground">{participant.vendorName}</span>
-                          <span className="font-medium">{participant.quantity} {order.unit}</span>
+                        <div key={participant.id} className="flex justify-between text-xs bg-muted dark:bg-zinc-800 rounded p-2">
+                          <span className="text-muted-foreground dark:text-zinc-300">{participant.vendorName}</span>
+                          <span className="font-medium text-foreground dark:text-white">{participant.quantity} {order.unit}</span>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
 
-                <div className="bg-secondary/10 rounded-lg p-3">
+                <div className="bg-secondary/10 dark:bg-zinc-800 rounded-lg p-3">
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Total Revenue:</span>
-                    <span className="font-bold text-secondary">₹{(order.totalQuantity * order.bulkPrice).toFixed(0)}</span>
+                    <span className="text-muted-foreground dark:text-zinc-300">Total Revenue:</span>
+                    <span className="font-bold text-secondary dark:text-blue-300">₹{(order.totalQuantity * order.bulkPrice).toFixed(0)}</span>
                   </div>
                 </div>
 
@@ -1131,16 +1154,29 @@ const SupplierDashboard = () => {
                     <Edit className="w-4 h-4" />
                     Edit Order
                   </Button>
-                  <Button 
-                    variant="destructive" 
-                    size="sm"
-                    onClick={() => handleCancelOrder(order)}
-                    className="flex items-center gap-2"
-                    disabled={order.status === 'cancelled'}
-                  >
-                    <X className="w-4 h-4" />
-                    Cancel Order
-                  </Button>
+                  {order.status !== 'completed' && (
+                    <Button 
+                      variant="destructive" 
+                      size="sm"
+                      onClick={() => handleCancelOrder(order)}
+                      className="flex items-center gap-2"
+                      disabled={order.status === 'cancelled'}
+                    >
+                      <X className="w-4 h-4" />
+                      Cancel Order
+                    </Button>
+                  )}
+                  {order.status === 'completed' && (
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => handleViewReceipt(order)}
+                      className="flex items-center gap-2"
+                    >
+                      <Receipt className="w-4 h-4" />
+                      View Receipt
+                    </Button>
+                  )}
                   {(order.status === 'cancelled' || order.status === 'completed') && (
                     <Button 
                       variant="destructive" 
@@ -1193,9 +1229,12 @@ const SupplierDashboard = () => {
                           </CardTitle>
                           <CardDescription className="text-muted-foreground">
                             {order.participants.length} vendor{order.participants.length !== 1 ? 's' : ''} joined • 
-                            Total Quantity: {order.totalQuantity} {order.unit} • 
-                            Status: <Badge variant={getStatusColor(order.status)} className="ml-1">{order.status.toUpperCase()}</Badge>
+                            Total Quantity: {order.totalQuantity} {order.unit}
                           </CardDescription>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-sm text-muted-foreground">Status:</span>
+                            <Badge variant={getStatusColor(order.status)}>{order.status.toUpperCase()}</Badge>
+                          </div>
                         </div>
                         <div className="text-right">
                           <p className="text-2xl font-bold text-blue-600">₹{order.bulkPrice}</p>
@@ -1245,16 +1284,16 @@ const SupplierDashboard = () => {
                           
                           <div className="grid gap-3">
                             {order.participants.map((participant) => (
-                              <Card key={participant.id} className="bg-blue-50 border border-blue-200">
+                              <Card key={participant.id} className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700">
                                 <CardContent className="p-4">
                                   <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-3">
-                                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                                        <User className="w-5 h-5 text-blue-600" />
+                                      <div className="w-10 h-10 bg-blue-100 dark:bg-blue-800 rounded-full flex items-center justify-center">
+                                        <User className="w-5 h-5 text-blue-600 dark:text-blue-300" />
                                       </div>
                                       <div>
-                                        <p className="font-medium text-foreground">{participant.vendorName}</p>
-                                        <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
+                                        <p className="font-medium text-foreground dark:text-white">{participant.vendorName}</p>
+                                        <div className="flex items-center gap-4 text-xs text-muted-foreground dark:text-zinc-300 mt-1">
                                           <div className="flex items-center gap-1">
                                             <ShoppingCart className="w-3 h-3" />
                                             <span>{participant.quantity} {order.unit}</span>
@@ -1268,8 +1307,8 @@ const SupplierDashboard = () => {
                                     </div>
                                     
                                     <div className="text-right">
-                                      <p className="font-bold text-blue-600">₹{(participant.quantity * order.bulkPrice).toFixed(0)}</p>
-                                      <p className="text-xs text-muted-foreground">Order Value</p>
+                                      <p className="font-bold text-blue-600 dark:text-blue-300">₹{(participant.quantity * order.bulkPrice).toFixed(0)}</p>
+                                      <p className="text-xs text-muted-foreground dark:text-zinc-400">Order Value</p>
                                     </div>
                                   </div>
                                   
@@ -1451,7 +1490,6 @@ const SupplierDashboard = () => {
                           <MapPin className="w-4 h-4" />
                           <span className="text-xs text-muted-foreground">Delivery:</span>
                           {(() => {
-                            console.log('Order location in supplier dashboard:', order.location);
                             return order.location.replace(/\s*\[[\d.-]+,[\d.-]+\]\s*/, '').trim();
                           })()}
                           {(() => {
@@ -1517,9 +1555,12 @@ const SupplierDashboard = () => {
                           <CardDescription className="text-muted-foreground">
                             ✅ Order accepted • 
                             {order.participants.length} vendor{order.participants.length !== 1 ? 's' : ''} joined • 
-                            Total Quantity: {order.totalQuantity} {order.unit} • 
-                            Status: <Badge variant="default" className="ml-1">ACCEPTED</Badge>
+                            Total Quantity: {order.totalQuantity} {order.unit}
                           </CardDescription>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-sm text-muted-foreground">Status:</span>
+                            <Badge variant="default">ACCEPTED</Badge>
+                          </div>
                         </div>
                         <div className="text-right">
                           <p className="text-2xl font-bold text-green-600">₹{order.bulkPrice}</p>
@@ -1798,9 +1839,12 @@ const SupplierDashboard = () => {
                           <CardDescription className="text-muted-foreground">
                             ✅ Order completed • 
                             {order.participants.length} vendor{order.participants.length !== 1 ? 's' : ''} participated • 
-                            Total Quantity: {order.totalQuantity} {order.unit} • 
-                            Status: <Badge variant="secondary" className="ml-1">COMPLETED</Badge>
+                            Total Quantity: {order.totalQuantity} {order.unit}
                           </CardDescription>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-sm text-muted-foreground">Status:</span>
+                            <Badge variant="secondary">COMPLETED</Badge>
+                          </div>
                         </div>
                         <div className="text-right flex flex-col items-end gap-2">
                           <div>
@@ -2081,7 +2125,14 @@ const SupplierDashboard = () => {
             </CardContent>
           </Card>
 
-          {filteredReviews.length === 0 ? (
+          {isLoadingReviews ? (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <Loader2 className="w-12 h-12 text-muted-foreground mx-auto mb-4 animate-spin" />
+                <p className="text-muted-foreground">Loading reviews...</p>
+              </CardContent>
+            </Card>
+          ) : filteredReviews.length === 0 ? (
             <Card>
               <CardContent className="p-8 text-center">
                 <Star className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
@@ -2124,6 +2175,14 @@ const SupplierDashboard = () => {
                           {new Date(review.createdAt).toLocaleDateString()}
                         </CardDescription>
                       </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeleteReview(review)}
+                        className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
                     </div>
                   </CardHeader>
                   
@@ -2640,15 +2699,16 @@ const SupplierDashboard = () => {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="edit-deliveryCharge">Delivery Charge (₹/km)</Label>
+                  <Label htmlFor="edit-deliveryCharge">Delivery Charge (₹/km) *</Label>
                   <Input
                     id="edit-deliveryCharge"
                     type="number"
                     value={newOrder.deliveryChargePerKm || ''}
                     onChange={(e) => setNewOrder({...newOrder, deliveryChargePerKm: parseFloat(e.target.value) || 0})}
                     placeholder="5"
-                    min="0"
+                    min="0.01"
                     step="0.01"
+                    required
                     className={formErrors.deliveryChargePerKm ? 'border-red-500' : ''}
                   />
                   {formErrors.deliveryChargePerKm && (
@@ -3240,15 +3300,16 @@ const SupplierDashboard = () => {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="deliveryChargePerKm">Delivery Charge per Kilometer (₹)</Label>
+              <Label htmlFor="deliveryChargePerKm">Delivery Charge per Kilometer (₹) *</Label>
               <Input
                 id="deliveryChargePerKm"
                 type="number"
                 value={newOrder.deliveryChargePerKm || ''}
                 onChange={(e) => setNewOrder({...newOrder, deliveryChargePerKm: parseFloat(e.target.value) || 0})}
                 placeholder="5.00"
-                min="0"
+                min="0.01"
                 step="0.01"
+                required
                 className={formErrors.deliveryChargePerKm ? 'border-red-500' : ''}
               />
               {formErrors.deliveryChargePerKm && (
@@ -3321,6 +3382,125 @@ const SupplierDashboard = () => {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Receipt Modal */}
+      <Dialog open={isReceiptModalOpen} onOpenChange={setIsReceiptModalOpen}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Receipt className="w-5 h-5" />
+              Order Receipt
+            </DialogTitle>
+            <DialogDescription>
+              Order receipt for completed orders
+            </DialogDescription>
+          </DialogHeader>
+          {receiptOrder && user && (
+            <div className="space-y-4">
+              {/* Order Info */}
+              <div className="bg-muted/30 rounded-lg p-4">
+                <h4 className="font-medium text-foreground mb-2">{receiptOrder.item}</h4>
+                <p className="text-sm text-muted-foreground mb-2">by {receiptOrder.supplierName}</p>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Bulk Price:</span>
+                    <span className="font-medium ml-1">₹{receiptOrder.bulkPrice}/{receiptOrder.unit}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Original Price:</span>
+                    <span className="font-medium ml-1">₹{receiptOrder.originalPrice}/{receiptOrder.unit}</span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Order Summary */}
+              <div className="bg-muted/10 rounded-lg p-4">
+                <div className="flex justify-between items-center text-sm mb-2">
+                  <span className="font-medium">Total Quantity:</span>
+                  <span className="text-foreground">{receiptOrder.totalQuantity} {receiptOrder.unit}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm mb-2">
+                  <span className="font-medium">Unit Price:</span>
+                  <span className="text-foreground">₹{receiptOrder.bulkPrice}/{receiptOrder.unit}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm mb-2">
+                  <span className="font-medium">Total Revenue:</span>
+                  <span className="text-foreground">₹{(receiptOrder.totalQuantity * receiptOrder.bulkPrice).toFixed(0)}</span>
+                </div>
+                <div className="flex justify-between items-center text-lg font-bold border-t pt-2 mt-2">
+                  <span>Total Revenue:</span>
+                  <span className="text-primary">₹{(receiptOrder.totalQuantity * receiptOrder.bulkPrice).toFixed(0)}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-green-600">Vendor Savings:</span>
+                  <span className="text-green-600 font-medium">₹{((receiptOrder.originalPrice - receiptOrder.bulkPrice) * receiptOrder.totalQuantity).toFixed(0)}</span>
+                </div>
+              </div>
+
+              {/* Vendor Details */}
+              {receiptOrder.participants.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="font-medium text-foreground">Participating Vendors:</h4>
+                  <div className="space-y-2">
+                    {receiptOrder.participants.map((participant) => (
+                      <div key={participant.id} className="bg-muted/5 border rounded-lg p-3">
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="font-medium">{participant.vendorName}</span>
+                          <span className="text-foreground">{participant.quantity} {receiptOrder.unit}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs text-muted-foreground mt-1">
+                          <span>Order Value:</span>
+                          <span>₹{(participant.quantity * receiptOrder.bulkPrice).toFixed(0)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Order Status */}
+              <div className="bg-secondary/10 border border-secondary/20 rounded-lg p-3">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-secondary" />
+                  <span className="text-sm font-medium text-secondary">Order Completed</span>
+                </div>
+                <p className="text-xs text-secondary/80 mt-1">
+                  This order has been successfully completed and delivered to all participating vendors.
+                </p>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Review Confirmation Dialog */}
+      <AlertDialog open={!!reviewToDelete} onOpenChange={(open) => !open && setReviewToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Review</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this review? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteReview}
+              disabled={isDeletingReview}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isDeletingReview ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete Review'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

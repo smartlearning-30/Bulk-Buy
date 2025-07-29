@@ -21,7 +21,7 @@ import {
   User as FirebaseUser 
 } from 'firebase/auth';
 import { db, auth } from '@/lib/firebase';
-import { GroupOrder, CreateOrderData, Participant, User, UserRole } from '@/types';
+import { GroupOrder, CreateOrderData, Participant, User, UserRole, Review } from '@/types';
 
 // Haversine formula for calculating distance between two coordinates
 const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
@@ -40,7 +40,8 @@ const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: numbe
 const COLLECTIONS = {
   USERS: 'users',
   GROUP_ORDERS: 'groupOrders',
-  PARTICIPANTS: 'participants'
+  PARTICIPANTS: 'participants',
+  REVIEWS: 'reviews'
 } as const;
 
 // User Service
@@ -53,7 +54,7 @@ export const userService = {
         id: userCredential.user.uid,
         email,
         role,
-        name
+        name: name // Placeholder, will be updated later if needed
       };
       
       // Save user data to Firestore
@@ -64,7 +65,6 @@ export const userService = {
       
       return user;
     } catch (error) {
-      console.error('Registration error:', error);
       throw error;
     }
   },
@@ -75,7 +75,6 @@ export const userService = {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       return userCredential.user;
     } catch (error) {
-      console.error('Login error:', error);
       throw error;
     }
   },
@@ -85,7 +84,6 @@ export const userService = {
     try {
       await signOut(auth);
     } catch (error) {
-      console.error('Logout error:', error);
       throw error;
     }
   },
@@ -103,7 +101,6 @@ export const userService = {
       }
       return null;
     } catch (error) {
-      console.error('Get user error:', error);
       throw error;
     }
   },
@@ -119,14 +116,9 @@ export const groupOrderService = {
   // Create new group order
   async createOrder(orderData: CreateOrderData, supplierId: string, supplierName: string): Promise<GroupOrder> {
     try {
-      console.log('createOrder: Starting order creation for supplier:', supplierId);
       const userDoc = await userService.getUserById(supplierId);
       
-      console.log('Creating order for supplier:', supplierId);
-      console.log('User doc found:', userDoc);
-      
       if (!userDoc) {
-        console.log('User doc not found, skipping notifications');
         // Don't throw error, just continue
       }
 
@@ -146,39 +138,28 @@ export const groupOrderService = {
       });
 
       const createdOrder = { ...order, id: docRef.id };
-      console.log('createOrder: Order created successfully with ID:', createdOrder.id);
       
       // Store notification for supplier about order creation
       if (userDoc?.id) {
-        console.log('createOrder: Storing order created notification for supplier:', userDoc.id);
-      } else {
-        console.log('createOrder: No userDoc found, skipping supplier notification');
+        // Notification logic here
       }
       
       // Store notification for all vendors about new order
       try {
-        console.log('createOrder: Looking for vendors to notify about new order...');
         const vendorsSnapshot = await getDocs(query(collection(db, COLLECTIONS.USERS), where('role', '==', 'vendor')));
-        console.log('createOrder: Found vendors:', vendorsSnapshot.docs.length);
         
         for (const vendorDoc of vendorsSnapshot.docs) {
           const vendorData = vendorDoc.data();
           const vendorId = vendorData.id || vendorDoc.id;
-          console.log('createOrder: Creating notification for vendor:', vendorId, vendorData.name || vendorData.email);
           
           // Store notification for vendor
         }
-        
-        if (vendorsSnapshot.docs.length === 0) {
-          console.log('createOrder: No vendors found in database to notify');
-        }
       } catch (error) {
-        console.error('createOrder: Error storing notifications for vendors:', error);
+        // Silent notification error
       }
 
       return createdOrder;
     } catch (error) {
-      console.error('Create order error:', error);
       throw error;
     }
   },
@@ -334,7 +315,8 @@ export const groupOrderService = {
                 quantity: participantData.quantity,
                 joinedAt: participantData.joinedAt?.toDate?.()?.toISOString().split('T')[0] || participantData.joinedAt,
                 vendorPhone: participantData.vendorPhone,
-                vendorLocation: participantData.vendorLocation
+                vendorLocation: participantData.vendorLocation,
+                hasReviewed: participantData.hasReviewed || false
               } as Participant);
             });
             
@@ -393,11 +375,11 @@ export const groupOrderService = {
     const ordersRef = collection(db, COLLECTIONS.GROUP_ORDERS);
     const q = query(ordersRef, orderBy('createdAt', 'desc'));
     
-    return onSnapshot(q, (querySnapshot) => {
+    return onSnapshot(q, async (querySnapshot) => {
       const orders: GroupOrder[] = [];
       
       // Process each order and fetch its participants
-      querySnapshot.docs.forEach((doc) => {
+      for (const doc of querySnapshot.docs) {
         const data = doc.data();
         const order: GroupOrder = {
           id: doc.id,
@@ -406,29 +388,32 @@ export const groupOrderService = {
           participants: [] // Initialize empty participants array
         } as GroupOrder;
         
-        orders.push(order);
-      });
-      
-                // Fetch participants for all orders
-          Promise.all(orders.map(async (order) => {
-            try {
-              const participantsRef = collection(db, COLLECTIONS.PARTICIPANTS);
-              const participantsQuery = query(participantsRef, where('orderId', '==', order.id));
-              const participantsSnapshot = await getDocs(participantsQuery);
-              
-              const participants: Participant[] = [];
-              participantsSnapshot.forEach((participantDoc) => {
-                const participantData = participantDoc.data();
-                participants.push({
-                  id: participantDoc.id,
-                  vendorId: participantData.vendorId,
-                  vendorName: participantData.vendorName,
-                  quantity: participantData.quantity,
-                  joinedAt: participantData.joinedAt?.toDate?.()?.toISOString().split('T')[0] || participantData.joinedAt,
-                  vendorPhone: participantData.vendorPhone,
-                  vendorLocation: participantData.vendorLocation
-                } as Participant);
-              });
+        // Fetch participants for this order using real-time listener
+        try {
+          const participantsRef = collection(db, COLLECTIONS.PARTICIPANTS);
+          const participantsQuery = query(participantsRef, where('orderId', '==', order.id));
+          const participantsSnapshot = await getDocs(participantsQuery);
+          
+          const participants: Participant[] = [];
+          participantsSnapshot.forEach((participantDoc) => {
+            const participantData = participantDoc.data();
+            
+            // Ensure hasReviewed is always a boolean
+            const hasReviewed = participantData.hasReviewed === true;
+            
+            const participant = {
+              id: participantDoc.id,
+              vendorId: participantData.vendorId,
+              vendorName: participantData.vendorName,
+              quantity: participantData.quantity,
+              joinedAt: participantData.joinedAt?.toDate?.()?.toISOString().split('T')[0] || participantData.joinedAt,
+              vendorPhone: participantData.vendorPhone,
+              vendorLocation: participantData.vendorLocation,
+              hasReviewed: hasReviewed
+            } as Participant;
+            
+            participants.push(participant);
+          });
           
           order.participants = participants;
           // Calculate total quantity from participants
@@ -438,11 +423,140 @@ export const groupOrderService = {
           order.participants = [];
           order.totalQuantity = 0;
         }
-      })).then(() => {
-        callback(orders);
-      });
+        
+        orders.push(order);
+      }
+      
+      // Call callback with all orders and their participants
+      callback(orders);
     }, (error) => {
       console.error('Error in onOrdersSnapshot:', error);
+    });
+  },
+
+  // Enhanced real-time listener that also listens to participant changes
+  onOrdersWithParticipantsSnapshot(callback: (orders: GroupOrder[]) => void) {
+    const ordersRef = collection(db, COLLECTIONS.GROUP_ORDERS);
+    const q = query(ordersRef, orderBy('createdAt', 'desc'));
+    
+    let lastOrdersData = '';
+    let isProcessing = false;
+    
+    const processOrders = async (ordersSnapshot: any) => {
+      if (isProcessing) return; // Prevent concurrent processing
+      isProcessing = true;
+      
+      const orders: GroupOrder[] = [];
+      
+      // Process each order
+      for (const doc of ordersSnapshot.docs) {
+        const data = doc.data();
+        const order: GroupOrder = {
+          id: doc.id,
+          ...data,
+          createdAt: data.createdAt?.toDate?.()?.toISOString().split('T')[0] || data.createdAt,
+          participants: []
+        } as GroupOrder;
+        
+        orders.push(order);
+      }
+      
+      // Now fetch participants for all orders
+      await Promise.all(orders.map(async (order) => {
+        try {
+          const participantsRef = collection(db, COLLECTIONS.PARTICIPANTS);
+          const participantsQuery = query(participantsRef, where('orderId', '==', order.id));
+          const participantsSnapshot = await getDocs(participantsQuery);
+          
+          const participants: Participant[] = [];
+          participantsSnapshot.forEach((participantDoc) => {
+            const participantData = participantDoc.data();
+            
+            const participant = {
+              id: participantDoc.id,
+              vendorId: participantData.vendorId,
+              vendorName: participantData.vendorName,
+              quantity: participantData.quantity,
+              joinedAt: participantData.joinedAt?.toDate?.()?.toISOString().split('T')[0] || participantData.joinedAt,
+              vendorPhone: participantData.vendorPhone,
+              vendorLocation: participantData.vendorLocation,
+              hasReviewed: participantData.hasReviewed === true
+            } as Participant;
+            
+            participants.push(participant);
+          });
+          
+          order.participants = participants;
+          order.totalQuantity = participants.reduce((sum, p) => sum + p.quantity, 0);
+        } catch (error) {
+          console.error('Error fetching participants for order:', order.id, error);
+          order.participants = [];
+          order.totalQuantity = 0;
+        }
+      }));
+      
+      // Create a hash of the orders data to prevent duplicate callbacks
+      const ordersDataHash = JSON.stringify(orders.map(o => ({ id: o.id, participants: o.participants.map(p => ({ vendorId: p.vendorId, hasReviewed: p.hasReviewed })) })));
+      
+      if (ordersDataHash !== lastOrdersData) {
+        lastOrdersData = ordersDataHash;
+        callback(orders);
+      }
+      
+      isProcessing = false;
+    };
+    
+    // Listen to orders
+    const ordersUnsubscribe = onSnapshot(q, async (querySnapshot) => {
+      processOrders(querySnapshot);
+    }, (error) => {
+      console.error('Error in onOrdersWithParticipantsSnapshot:', error);
+      isProcessing = false;
+    });
+    
+    // Also listen to all participants changes
+    const participantsRef = collection(db, COLLECTIONS.PARTICIPANTS);
+    const participantsUnsubscribe = onSnapshot(participantsRef, async (participantsSnapshot) => {
+      
+      // When participants change, refetch all orders with their participants
+      const ordersSnapshot = await getDocs(q);
+      await processOrders(ordersSnapshot);
+    }, (error) => {
+      console.error('Error in participants listener:', error);
+      isProcessing = false;
+    });
+    
+    // Return a function that unsubscribes from both listeners
+    return () => {
+      ordersUnsubscribe();
+      participantsUnsubscribe();
+    };
+  },
+
+  // Listen to participants in real-time for a specific order
+  onOrderParticipantsSnapshot(orderId: string, callback: (participants: Participant[]) => void) {
+    const participantsRef = collection(db, COLLECTIONS.PARTICIPANTS);
+    const q = query(participantsRef, where('orderId', '==', orderId));
+    
+    return onSnapshot(q, (querySnapshot) => {
+      const participants: Participant[] = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        participants.push({
+          id: doc.id,
+          vendorId: data.vendorId,
+          vendorName: data.vendorName,
+          quantity: data.quantity,
+          joinedAt: data.joinedAt?.toDate?.()?.toISOString().split('T')[0] || data.joinedAt,
+          vendorPhone: data.vendorPhone,
+          vendorLocation: data.vendorLocation,
+          hasReviewed: data.hasReviewed || false
+        } as Participant);
+      });
+      
+      callback(participants);
+    }, (error) => {
+      console.error('Error in onOrderParticipantsSnapshot:', error);
     });
   }
 };
@@ -490,6 +604,7 @@ export const participantService = {
         ...participant,
         orderId,
         vendorLocation,
+        hasReviewed: false,
         joinedAt: serverTimestamp()
       });
       
@@ -507,7 +622,6 @@ export const participantService = {
       await groupOrderService.updateOrder(orderId, updates);
       
       // Store notification for supplier about new participant
-      console.log('Storing participant joined notification for supplier:', orderData.supplierId);
     } catch (error) {
       console.error('Join order error:', error);
       throw error;
@@ -651,10 +765,6 @@ export const participantService = {
         else if (orderData.status === 'accepted') {
           updates.status = 'open';
         }
-        // If total quantity falls below minimum and order was locked, change status back to 'open'
-        else if (newTotalQuantity < orderData.minQuantity && orderData.status === 'locked') {
-          updates.status = 'open';
-        }
         
         await groupOrderService.updateOrder(orderId, updates);
         
@@ -663,6 +773,36 @@ export const participantService = {
       }
     } catch (error) {
       console.error('Update participant error:', error);
+      throw error;
+    }
+  },
+
+  // Mark participant as reviewed
+  async markParticipantReviewed(orderId: string, vendorId: string): Promise<void> {
+    try {
+      
+      const participantsRef = collection(db, COLLECTIONS.PARTICIPANTS);
+      const q = query(
+        participantsRef, 
+        where('orderId', '==', orderId),
+        where('vendorId', '==', vendorId)
+      );
+      const querySnapshot = await getDocs(q);
+      
+      if (!querySnapshot.empty) {
+        const participantDoc = querySnapshot.docs[0];
+        
+        await updateDoc(doc(db, COLLECTIONS.PARTICIPANTS, participantDoc.id), {
+          hasReviewed: true,
+          reviewedAt: serverTimestamp()
+        });
+        
+      } else {
+        console.error('No participant found for orderId:', orderId, 'vendorId:', vendorId);
+        throw new Error('Participant not found');
+      }
+    } catch (error) {
+      console.error('Mark participant reviewed error:', error);
       throw error;
     }
   },
@@ -701,10 +841,6 @@ export const participantService = {
         if (orderData.status === 'accepted') {
           updates.status = 'open';
         }
-        // If total quantity falls below minimum and order was locked, change status back to 'open'
-        else if (newTotalQuantity < orderData.minQuantity && orderData.status === 'locked') {
-          updates.status = 'open';
-        }
         
         await groupOrderService.updateOrder(orderId, updates);
       }
@@ -724,13 +860,19 @@ export const participantService = {
       const participants: Participant[] = [];
       querySnapshot.forEach((doc) => {
         const data = doc.data();
-        participants.push({
+        
+        const participant = {
           id: doc.id,
           vendorId: data.vendorId,
           vendorName: data.vendorName,
           quantity: data.quantity,
-          joinedAt: data.joinedAt?.toDate?.()?.toISOString().split('T')[0] || data.joinedAt
-        });
+          joinedAt: data.joinedAt?.toDate?.()?.toISOString().split('T')[0] || data.joinedAt,
+          vendorPhone: data.vendorPhone,
+          vendorLocation: data.vendorLocation,
+          hasReviewed: data.hasReviewed === true
+        };
+        
+        participants.push(participant);
       });
       
       return participants;
@@ -743,32 +885,23 @@ export const participantService = {
   // Reset accepted orders with no participants back to open status
   async resetAcceptedOrdersWithNoParticipants(): Promise<void> {
     try {
-      console.log('Starting reset of accepted orders with no participants...');
       const ordersRef = collection(db, COLLECTIONS.GROUP_ORDERS);
       const q = query(ordersRef, where('status', '==', 'accepted'));
       const querySnapshot = await getDocs(q);
-      
-      console.log(`Found ${querySnapshot.docs.length} accepted orders to check`);
       
       for (const orderDoc of querySnapshot.docs) {
         const orderData = orderDoc.data() as GroupOrder;
         const participants = await this.getOrderParticipants(orderDoc.id);
         
-        console.log(`Order ${orderDoc.id} (${orderData.item}): ${participants.length} participants`);
-        
         // If accepted order has no participants, reset to open
         if (participants.length === 0) {
-          console.log(`Resetting order ${orderDoc.id} from accepted to open (no participants)`);
           await groupOrderService.updateOrder(orderDoc.id, {
             status: 'open',
             totalQuantity: 0
           });
         }
       }
-      
-      console.log('Reset completed');
     } catch (error) {
-      console.error('Reset accepted orders error:', error);
       throw error;
     }
   },
@@ -776,7 +909,6 @@ export const participantService = {
   // Check and update expired orders
   async checkAndUpdateExpiredOrders(): Promise<void> {
     try {
-      console.log('Checking for expired orders...');
       const ordersRef = collection(db, COLLECTIONS.GROUP_ORDERS);
       const q = query(ordersRef, where('status', 'in', ['open', 'locked']));
       const querySnapshot = await getDocs(q);
@@ -790,11 +922,8 @@ export const participantService = {
         
         // Check if order has expired
         if (deadline < now) {
-          console.log(`Order ${orderDoc.id} (${orderData.item}) has expired`);
-          
           // If order didn't meet minimum quantity, mark as expired
           if (orderData.totalQuantity < orderData.minQuantity) {
-            console.log(`Marking order ${orderDoc.id} as expired (insufficient quantity)`);
             await groupOrderService.updateOrder(orderDoc.id, {
               status: 'expired'
             });
@@ -804,10 +933,7 @@ export const participantService = {
           // (supplier can still manually accept it)
         }
       }
-      
-      console.log(`Updated ${expiredCount} orders to expired status`);
     } catch (error) {
-      console.error('Check expired orders error:', error);
       throw error;
     }
   }
@@ -827,9 +953,157 @@ export function onParticipantsSnapshot(orderId: string, callback: (participants:
         quantity: data.quantity,
         joinedAt: data.joinedAt?.toDate?.()?.toISOString().split('T')[0] || data.joinedAt,
         vendorPhone: data.vendorPhone,
-        vendorLocation: data.vendorLocation
+        vendorLocation: data.vendorLocation,
+        hasReviewed: data.hasReviewed || false
       });
     });
     callback(participants);
   });
-} 
+}
+
+// Review Service
+export const reviewService = {
+  // Submit a review
+  async submitReview(reviewData: Omit<Review, 'id' | 'createdAt'>): Promise<Review> {
+    try {
+      const reviewsRef = collection(db, COLLECTIONS.REVIEWS);
+      const reviewDoc = await addDoc(reviewsRef, {
+        ...reviewData,
+        createdAt: serverTimestamp()
+      });
+
+      const review: Review = {
+        id: reviewDoc.id,
+        ...reviewData,
+        createdAt: new Date().toISOString().split('T')[0]
+      };
+
+      return review;
+    } catch (error) {
+      console.error('Submit review error:', error);
+      throw error;
+    }
+  },
+
+  // Get reviews by supplier ID
+  async getReviewsBySupplier(supplierId: string): Promise<Review[]> {
+    try {
+      const reviewsRef = collection(db, COLLECTIONS.REVIEWS);
+      const q = query(
+        reviewsRef, 
+        where('supplierId', '==', supplierId)
+      );
+      const querySnapshot = await getDocs(q);
+      
+      const reviews: Review[] = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        reviews.push({
+          id: doc.id,
+          orderId: data.orderId,
+          supplierId: data.supplierId,
+          supplierName: data.supplierName,
+          vendorId: data.vendorId,
+          vendorName: data.vendorName,
+          orderItem: data.orderItem,
+          rating: data.rating,
+          comment: data.comment,
+          createdAt: data.createdAt?.toDate?.()?.toISOString().split('T')[0] || data.createdAt,
+          orderQuantity: data.orderQuantity,
+          orderValue: data.orderValue
+        });
+      });
+      
+      // Sort reviews by createdAt in descending order (newest first)
+      reviews.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      
+      return reviews;
+    } catch (error) {
+      console.error('Get reviews by supplier error:', error);
+      throw error;
+    }
+  },
+
+  // Get reviews by order ID
+  async getReviewsByOrder(orderId: string): Promise<Review[]> {
+    try {
+      const reviewsRef = collection(db, COLLECTIONS.REVIEWS);
+      const q = query(
+        reviewsRef, 
+        where('orderId', '==', orderId)
+      );
+      const querySnapshot = await getDocs(q);
+      
+      const reviews: Review[] = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        reviews.push({
+          id: doc.id,
+          orderId: data.orderId,
+          supplierId: data.supplierId,
+          supplierName: data.supplierName,
+          vendorId: data.vendorId,
+          vendorName: data.vendorName,
+          orderItem: data.orderItem,
+          rating: data.rating,
+          comment: data.comment,
+          createdAt: data.createdAt?.toDate?.()?.toISOString().split('T')[0] || data.createdAt,
+          orderQuantity: data.orderQuantity,
+          orderValue: data.orderValue
+        });
+      });
+      
+      // Sort reviews by createdAt in descending order (newest first)
+      reviews.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      
+      return reviews;
+    } catch (error) {
+      console.error('Get reviews by order error:', error);
+      throw error;
+    }
+  },
+
+  // Real-time listener for reviews by supplier
+  onReviewsBySupplierSnapshot(supplierId: string, callback: (reviews: Review[]) => void) {
+    const reviewsRef = collection(db, COLLECTIONS.REVIEWS);
+    const q = query(
+      reviewsRef, 
+      where('supplierId', '==', supplierId)
+    );
+    return onSnapshot(q, (querySnapshot) => {
+      const reviews: Review[] = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        reviews.push({
+          id: doc.id,
+          orderId: data.orderId,
+          supplierId: data.supplierId,
+          supplierName: data.supplierName,
+          vendorId: data.vendorId,
+          vendorName: data.vendorName,
+          orderItem: data.orderItem,
+          rating: data.rating,
+          comment: data.comment,
+          createdAt: data.createdAt?.toDate?.()?.toISOString().split('T')[0] || data.createdAt,
+          orderQuantity: data.orderQuantity,
+          orderValue: data.orderValue
+        });
+      });
+      // Sort reviews by createdAt in descending order (newest first)
+      reviews.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(reviews);
+    }, (error) => {
+      console.error('Review snapshot error:', error);
+    });
+  },
+
+  // Delete a review
+  async deleteReview(reviewId: string): Promise<void> {
+    try {
+      await deleteDoc(doc(db, COLLECTIONS.REVIEWS, reviewId));
+    } catch (error) {
+      console.error('Delete review error:', error);
+      throw error;
+    }
+  }
+}; 

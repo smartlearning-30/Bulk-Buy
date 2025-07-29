@@ -6,7 +6,7 @@ import { User, UserRole } from '@/types';
 interface FirebaseAuthContextType {
   user: User | null;
   firebaseUser: FirebaseUser | null;
-  login: (email: string, password: string, role: UserRole, name: string) => Promise<void>;
+  login: (email: string, password: string, role: UserRole) => Promise<void>;
   register: (email: string, password: string, role: UserRole, name: string) => Promise<void>;
   logout: () => Promise<void>;
   isLoading: boolean;
@@ -36,7 +36,6 @@ export const FirebaseAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
           const userData = await userService.getUserById(firebaseUser.uid);
           setUser(userData);
         } catch (error) {
-          console.error('Error fetching user data:', error);
           setUser(null);
         }
       } else {
@@ -55,14 +54,13 @@ export const FirebaseAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
       const userData = await userService.register(email, password, role, name);
       setUser(userData);
     } catch (error) {
-      console.error('Registration error:', error);
       throw error;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const login = async (email: string, password: string, role: UserRole, name: string) => {
+  const login = async (email: string, password: string, role: UserRole) => {
     setIsLoading(true);
     try {
       const firebaseUser = await userService.login(email, password);
@@ -78,7 +76,6 @@ export const FirebaseAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
       }
       
     } catch (error) {
-      console.error('Login error:', error);
       throw error;
     } finally {
       setIsLoading(false);
@@ -92,7 +89,6 @@ export const FirebaseAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
       setUser(null);
       setFirebaseUser(null);
     } catch (error) {
-      console.error('Logout error:', error);
       throw error;
     } finally {
       setIsLoading(false);

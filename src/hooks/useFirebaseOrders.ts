@@ -16,7 +16,7 @@ export const useFirebaseOrders = () => {
           const user = await userService.getUserById(firebaseUser.uid);
           setCurrentUser(user);
         } catch (error) {
-          console.error('Error getting user:', error);
+          // Silent error
         }
       } else {
         setCurrentUser(null);
@@ -28,61 +28,30 @@ export const useFirebaseOrders = () => {
 
   // Real-time orders listener
   useEffect(() => {
-    console.log('Setting up Firebase orders listener...');
+  
     
     const unsubscribe = groupOrderService.onOrdersSnapshot((orders) => {
-      console.log('Firebase orders received:', orders);
-      setOrders(orders);
+      
+      // Ensure all participants have consistent hasReviewed field
+      const processedOrders = orders.map(order => ({
+        ...order,
+        participants: order.participants.map(participant => ({
+          ...participant,
+          hasReviewed: participant.hasReviewed === true
+        }))
+      }));
+      
+      setOrders(processedOrders);
     });
 
-    // Fallback: manually fetch orders after a delay to ensure we have data
-    const fallbackTimer = setTimeout(async () => {
-      try {
-        console.log('Running fallback: manually fetching orders...');
-        const manualOrders = await groupOrderService.getAllOrders();
-        console.log('Manual orders fetched:', manualOrders);
-        if (manualOrders.length > 0 && orders.length === 0) {
-          console.log('Setting orders from fallback fetch');
-          setOrders(manualOrders);
-        }
-      } catch (error) {
-        console.error('Fallback: Error fetching orders:', error);
-      }
-    }, 2000); // Wait 2 seconds before fallback
-
-    // Automatically reset accepted orders with no participants
-    const resetTimer = setTimeout(async () => {
-      try {
-        console.log('Auto-resetting accepted orders with no participants...');
-        await participantService.resetAcceptedOrdersWithNoParticipants();
-      } catch (error) {
-        console.error('Auto-reset failed:', error);
-      }
-    }, 3000); // Wait 3 seconds before auto-reset
-
-    // Automatically check and update expired orders
-    const expiredTimer = setTimeout(async () => {
-      try {
-        console.log('Auto-checking for expired orders...');
-        await participantService.checkAndUpdateExpiredOrders();
-      } catch (error) {
-        console.error('Auto-expired check failed:', error);
-      }
-    }, 5000); // Wait 5 seconds before checking expired orders
-
     return () => {
-      console.log('Cleaning up Firebase orders listener');
       unsubscribe();
-      clearTimeout(fallbackTimer);
-      clearTimeout(resetTimer);
-      clearTimeout(expiredTimer);
     };
   }, []);
 
   // Demo data generator (for testing)
   const generateDemoData = async () => {
     if (!currentUser) {
-      console.error('No user logged in');
       return;
     }
 
@@ -121,7 +90,7 @@ export const useFirebaseOrders = () => {
         await groupOrderService.createOrder(orderData, currentUser.id, currentUser.name);
       }
     } catch (error) {
-      console.error('Error generating demo data:', error);
+      // Silent demo data generation
     } finally {
       setIsLoading(false);
     }
@@ -133,7 +102,7 @@ export const useFirebaseOrders = () => {
       const newOrder = await groupOrderService.createOrder(orderData, supplierId, supplierName);
       return newOrder;
     } catch (error) {
-      console.error('Error creating order:', error);
+      // Silent error
       throw error;
     } finally {
       setIsLoading(false);
@@ -145,7 +114,7 @@ export const useFirebaseOrders = () => {
     try {
       await participantService.joinOrder(orderId, vendorId, vendorName, quantity, vendorLocation, vendorPhone);
     } catch (error) {
-      console.error('Error joining order:', error);
+      // Silent error
       throw error;
     } finally {
       setIsLoading(false);
@@ -156,7 +125,7 @@ export const useFirebaseOrders = () => {
     try {
       return await groupOrderService.getOrdersByVendor(vendorId);
     } catch (error) {
-      console.error('Error getting vendor orders:', error);
+      // Silent error
       return [];
     }
   };
@@ -165,7 +134,7 @@ export const useFirebaseOrders = () => {
     try {
       return await groupOrderService.getOrdersBySupplier(supplierId);
     } catch (error) {
-      console.error('Error getting supplier orders:', error);
+      // Silent error
       return [];
     }
   };
@@ -175,7 +144,7 @@ export const useFirebaseOrders = () => {
     try {
       await participantService.updateParticipantQuantity(orderId, vendorId, newQuantity);
     } catch (error) {
-      console.error('Error updating participant quantity:', error);
+      // Silent error
       throw error;
     } finally {
       setIsLoading(false);
@@ -187,7 +156,7 @@ export const useFirebaseOrders = () => {
     try {
       await participantService.updateParticipantDetails(orderId, vendorId, vendorPhone, vendorLocation);
     } catch (error) {
-      console.error('Error updating participant details:', error);
+      // Silent error
       throw error;
     } finally {
       setIsLoading(false);
@@ -199,7 +168,7 @@ export const useFirebaseOrders = () => {
     try {
       await participantService.removeParticipant(orderId, vendorId);
     } catch (error) {
-      console.error('Error removing participant:', error);
+      // Silent error
       throw error;
     } finally {
       setIsLoading(false);
@@ -211,7 +180,7 @@ export const useFirebaseOrders = () => {
     try {
       await groupOrderService.updateOrder(orderId, updates);
     } catch (error) {
-      console.error('Error updating order:', error);
+      // Silent error
       throw error;
     } finally {
       setIsLoading(false);
@@ -233,18 +202,39 @@ export const useFirebaseOrders = () => {
   };
 
   // Mark a participant as reviewed
-  const markParticipantReviewed = (orderId: string, vendorId: string) => {
-    setOrders(prev => prev.map(order => {
-      if (order.id === orderId) {
-        return {
-          ...order,
-          participants: order.participants.map(p =>
-            p.vendorId === vendorId ? { ...p, hasReviewed: true } : p
-          )
-        };
-      }
-      return order;
-    }));
+  const markParticipantReviewed = async (orderId: string, vendorId: string) => {
+    try {
+      
+      // Update in Firebase first
+      await participantService.markParticipantReviewed(orderId, vendorId);
+      
+      
+      // Then update local state immediately for better UX
+      setOrders(prev => {
+        const updatedOrders = prev.map(order => {
+          if (order.id === orderId) {
+            const updatedParticipants = order.participants.map(p =>
+              p.vendorId === vendorId ? { ...p, hasReviewed: true } : p
+            );
+            
+            
+            return {
+              ...order,
+              participants: updatedParticipants
+            };
+          }
+          return order;
+        });
+        
+        
+        return updatedOrders;
+      });
+      
+      
+    } catch (error) {
+      // Silent error
+      throw error;
+    }
   };
 
   return {

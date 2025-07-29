@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useFirebaseAuth } from '@/contexts/FirebaseAuthContext';
 import { useFirebaseOrders } from '@/hooks/useFirebaseOrders';
+import { reviewService, participantService } from '@/services/firebaseService';
 import { GroupOrder } from '@/types';
 import { calculateDistance } from '@/lib/utils';
 import { ShoppingCart, Users, Calendar, MapPin, Package, TrendingDown, Loader2, Search, Filter, RefreshCw, PieChart, Activity, Phone, Mail, Truck, Receipt, Edit, X, Navigation, CheckCircle, Download, Star, Route, Trash2 } from 'lucide-react';
@@ -29,6 +30,7 @@ import { toast } from '@/hooks/use-toast';
 import { MapContainer, TileLayer, Marker, useMapEvents, Polyline, Popup } from 'react-leaflet';
 import L, { LatLngExpression, Icon, Map as LeafletMap, DivIcon } from 'leaflet';
 import { userService } from '@/services/firebaseService';
+import { useTheme } from '@/App';
 
 const DEFAULT_CENTER = { lat: 19.076, lng: 72.8777 }; // Mumbai as default
 const MAP_CONTAINER_STYLE = { width: '100%', height: '250px', borderRadius: '12px' };
@@ -123,13 +125,37 @@ const SuccessStories = () => (
 
 const VendorDashboard = () => {
   const { user } = useFirebaseAuth();
-  console.log('VendorDashboard: Current user:', user);
-  console.log('VendorDashboard: User ID:', user?.id);
-  console.log('VendorDashboard: User email:', user?.email);
+
   const { orders, joinOrder, updateParticipantQuantity, updateParticipantDetails, removeParticipant, isLoading, generateDemoData, getRemainingQuantity, isOrderAvailable, markParticipantReviewed } = useFirebaseOrders();
 
-
-
+  // Debug: Log participant data for completed orders
+  React.useEffect(() => {
+    if (user && orders.length > 0) {
+      const completedOrders = orders.filter(order => order.status === 'completed');
+      
+      // Check for duplicate order IDs
+      const orderIds = completedOrders.map(order => order.id);
+      const duplicateIds = orderIds.filter((id, index) => orderIds.indexOf(id) !== index);
+      if (duplicateIds.length > 0) {
+        // Removed console.warn
+      }
+      
+      // Removed console.log('=== ORDERS STATE DEBUG ===');
+      // Removed console.log('All orders count:', orders.length);
+      // Removed console.log('Completed orders count:', completedOrders.length);
+      // Removed console.log('All completed orders:', ...);
+      
+      completedOrders.forEach(order => {
+        const myParticipation = order.participants.find(p => p.vendorId === user.id);
+        if (myParticipation) {
+          // Removed console.log for myParticipation
+        } else {
+          // Removed console.log for no participation
+        }
+      });
+      // Removed console.log('=== END ORDERS STATE DEBUG ===');
+    }
+  }, [orders, user]);
 
   const [joinQuantities, setJoinQuantities] = useState<{ [key: string]: number }>({});
   const [searchTerm, setSearchTerm] = useState('');
@@ -160,6 +186,19 @@ const VendorDashboard = () => {
   const [deliveryRoute, setDeliveryRoute] = useState<any[]>([]);
   const [isLoadingRoute, setIsLoadingRoute] = useState(false);
   const mapRef = useRef<LeafletMap | null>(null);
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'open' | 'accepted' | 'completed' | 'cancelled' | 'expired'>('all');
+  const { theme } = useTheme();
+
+  useEffect(() => {
+    if (theme === 'dark' && !(window as any).__darkModeToastShown) {
+      toast({
+        title: 'Dark Mode Notice',
+        description: 'Some colors may not be updated properly in dark mode. We are working to improve the experience.',
+        variant: 'destructive',
+      });
+      (window as any).__darkModeToastShown = true;
+    }
+  }, [theme]);
 
   const availableOrders = orders.filter(order => {
     // Only show open orders (exclude expired, cancelled, etc.)
@@ -244,8 +283,6 @@ const VendorDashboard = () => {
 
   const handleJoinOrderClick = (order: GroupOrder) => {
     const quantity = joinQuantities[order.id] || 10;
-    console.log('Joining order:', order);
-    console.log('Order location:', order.location);
     setJoiningOrder(order);
     setJoinQuantity(quantity);
     setIsLocationModalOpen(true);
@@ -444,12 +481,37 @@ const VendorDashboard = () => {
 
     setIsSubmittingReview(true);
     try {
-      // Here you would typically save the review to Firebase
-      // For now, we'll simulate the API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Get the vendor's participation details
+      const myParticipation = reviewOrder.participants.find(p => p.vendorId === user.id);
+      if (!myParticipation) {
+        throw new Error('Vendor participation not found');
+      }
+
+      console.log('Submitting review for order:', reviewOrder.id, 'vendor:', user.id);
+
+      // Submit the review to Firebase
+      await reviewService.submitReview({
+        orderId: reviewOrder.id,
+        supplierId: reviewOrder.supplierId,
+        supplierName: reviewOrder.supplierName,
+        vendorId: user.id,
+        vendorName: myParticipation.vendorName,
+        orderItem: reviewOrder.item,
+        rating: reviewRating,
+        comment: reviewComment.trim(),
+        orderQuantity: `${myParticipation.quantity} ${reviewOrder.unit}`,
+        orderValue: `₹${(myParticipation.quantity * reviewOrder.bulkPrice).toFixed(0)}`
+      });
       
-      // Mark this vendor as having reviewed in the orders state
-      markParticipantReviewed(reviewOrder.id, user.id);
+      console.log('Review submitted successfully, marking participant as reviewed...');
+      
+      // Mark this vendor as having reviewed in Firebase and local state
+      await markParticipantReviewed(reviewOrder.id, user.id);
+      
+      console.log('Participant marked as reviewed successfully');
+      
+      // Force a small delay to ensure state updates are processed
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       toast({
         title: "Review Submitted!",
@@ -462,6 +524,7 @@ const VendorDashboard = () => {
       setReviewRating(5);
       setReviewComment('');
     } catch (error) {
+      console.error('Submit review error:', error);
       toast({
         title: "Failed to Submit Review",
         description: "Please try again",
@@ -633,6 +696,11 @@ const VendorDashboard = () => {
   const calculateSavings = (originalPrice: number, bulkPrice: number) => {
     return Math.round(((originalPrice - bulkPrice) / originalPrice) * 100);
   };
+
+  const [myOrderStatusFilter, setMyOrderStatusFilter] = useState<'all' | 'open' | 'accepted' | 'completed' | 'cancelled' | 'expired'>('all');
+  const filteredMyOrders = myOrderStatusFilter === 'all'
+    ? myOrders
+    : myOrders.filter(order => order.status === myOrderStatusFilter);
 
   return (
     <div className="container mx-auto px-4 py-6 space-y-6">
@@ -915,16 +983,35 @@ const VendorDashboard = () => {
 
                   {/* Progress Bar */}
                   <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span>Progress</span>
-                      <span>{order.totalQuantity}/{order.minQuantity} {order.unit}</span>
-                    </div>
-                    <div className="w-full bg-muted rounded-full h-2">
-                      <div 
-                        className="bg-primary h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${Math.min((order.totalQuantity / order.minQuantity) * 100, 100)}%` }}
-                      />
-                    </div>
+                    {order.status === 'completed' ? (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span>Order Progress</span>
+                          <span>{order.totalQuantity}/{order.minQuantity} {order.unit}</span>
+                        </div>
+                        <div className="w-full bg-muted rounded-full h-2">
+                          <div className="bg-green-500 h-2 rounded-full transition-all duration-300" style={{ width: '100%' }} />
+                        </div>
+                        <p className="text-xs text-green-700 font-semibold flex items-center gap-1">
+                          <CheckCircle className="w-4 h-4 inline-block text-green-600" /> Order Completed
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span>Order Progress</span>
+                          <span>{order.totalQuantity}/{order.minQuantity} {order.unit}</span>
+                        </div>
+                        <div className="w-full bg-muted rounded-full h-2">
+                          <div className="bg-primary h-2 rounded-full transition-all duration-300" style={{ width: `${Math.min((order.totalQuantity / order.minQuantity) * 100, 100)}%` }} />
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {order.totalQuantity >= order.minQuantity
+                            ? '✅ Minimum quantity reached!'
+                            : `${order.minQuantity - order.totalQuantity} more ${order.unit} needed`}
+                        </p>
+                      </>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-4 text-sm text-muted-foreground">
@@ -1024,24 +1111,36 @@ const VendorDashboard = () => {
 
         {/* My Orders Tab */}
         <TabsContent value="myorders" className="space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mb-4">
             <h2 className="text-2xl font-bold text-foreground">My Orders</h2>
-            <Badge variant="outline" className="text-sm">
-              {myOrders.length} Orders Joined
-            </Badge>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="flex items-center gap-2">
+                  <Filter className="w-4 h-4" />
+                  {myOrderStatusFilter === 'all' ? 'All Statuses' : myOrderStatusFilter.charAt(0).toUpperCase() + myOrderStatusFilter.slice(1)}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem onClick={() => setMyOrderStatusFilter('all')}>All</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setMyOrderStatusFilter('open')}>Open</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setMyOrderStatusFilter('accepted')}>Accepted</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setMyOrderStatusFilter('completed')}>Completed</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setMyOrderStatusFilter('cancelled')}>Cancelled</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setMyOrderStatusFilter('expired')}>Expired</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
-          {myOrders.length === 0 ? (
+          {filteredMyOrders.length === 0 ? (
             <Card>
               <CardContent className="p-8 text-center">
                 <Package className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                <p className="text-muted-foreground">You haven't joined any group orders yet.</p>
-                <p className="text-sm text-muted-foreground mt-2">Browse available orders to start saving money!</p>
+                <p className="text-muted-foreground">No orders found for this filter.</p>
               </CardContent>
             </Card>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {myOrders.map((order) => {
+              {filteredMyOrders.map((order) => {
                 const myParticipation = order.participants.find(p => p.vendorId === user?.id);
                 return (
                   <Card key={order.id} className="border-l-4 border-l-primary">
@@ -1067,9 +1166,22 @@ const VendorDashboard = () => {
                             )}
                           </CardDescription>
                         </div>
-                        <Badge variant={getStatusColor(order.status)}>
-                          {order.status.toUpperCase()}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          {order.status === 'completed' && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:bg-destructive/10"
+                              onClick={() => handleDeleteOrder(order)}
+                              title="Delete Order"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </Button>
+                          )}
+                          <Badge variant={getStatusColor(order.status)}>
+                            {order.status.toUpperCase()}
+                          </Badge>
+                        </div>
                       </div>
                     </CardHeader>
                     
@@ -1085,9 +1197,9 @@ const VendorDashboard = () => {
                         </div>
                       </div>
 
-                      <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                      <div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-lg p-3">
                         <div className="flex justify-between items-center">
-                          <span className="text-sm text-green-800">Your Savings:</span>
+                          <span className="text-sm text-green-800 dark:text-green-200">Your Savings:</span>
                           <span className="font-bold text-green-600">
                             ₹{((myParticipation?.quantity || 0) * (order.originalPrice - order.bulkPrice)).toFixed(0)}
                           </span>
@@ -1095,19 +1207,35 @@ const VendorDashboard = () => {
                       </div>
 
                       <div className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span>Order Progress</span>
-                          <span>{order.totalQuantity}/{order.minQuantity} {order.unit}</span>
-                        </div>
-                        <div className="w-full bg-muted rounded-full h-2">
-                          <div 
-                            className="bg-primary h-2 rounded-full transition-all duration-300"
-                            style={{ width: `${Math.min((order.totalQuantity / order.minQuantity) * 100, 100)}%` }}
-                          />
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {order.totalQuantity >= order.minQuantity ? '✅ Minimum quantity reached!' : `${order.minQuantity - order.totalQuantity} more ${order.unit} needed`}
-                        </p>
+                        {order.status === 'completed' ? (
+                          <>
+                            <div className="flex justify-between text-sm">
+                              <span>Order Progress</span>
+                              <span>{order.totalQuantity}/{order.minQuantity} {order.unit}</span>
+                            </div>
+                            <div className="w-full bg-muted rounded-full h-2">
+                              <div className="bg-green-500 h-2 rounded-full transition-all duration-300" style={{ width: '100%' }} />
+                            </div>
+                            <p className="text-xs text-green-700 font-semibold flex items-center gap-1">
+                              <CheckCircle className="w-4 h-4 inline-block text-green-600" /> Order Completed
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex justify-between text-sm">
+                              <span>Order Progress</span>
+                              <span>{order.totalQuantity}/{order.minQuantity} {order.unit}</span>
+                            </div>
+                            <div className="w-full bg-muted rounded-full h-2">
+                              <div className="bg-primary h-2 rounded-full transition-all duration-300" style={{ width: `${Math.min((order.totalQuantity / order.minQuantity) * 100, 100)}%` }} />
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {order.totalQuantity >= order.minQuantity
+                                ? '✅ Minimum quantity reached!'
+                                : `${order.minQuantity - order.totalQuantity} more ${order.unit} needed`}
+                            </p>
+                          </>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-4 text-sm text-muted-foreground">
@@ -1210,7 +1338,7 @@ const VendorDashboard = () => {
                           <Truck className="w-4 h-4" />
                           Track Delivery
                         </Button>
-                        {order.status === 'accepted' && (
+                        {order.status === 'completed' && (
                           <Button 
                             variant="outline" 
                             size="sm" 
@@ -1221,30 +1349,38 @@ const VendorDashboard = () => {
                             View Receipt
                           </Button>
                         )}
-                        {order.status === 'completed' && !order.participants.find(p => p.vendorId === user?.id)?.hasReviewed && (
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="flex items-center gap-2"
-                            onClick={() => handleWriteReview(order)}
-                          >
-                            <Star className="w-4 h-4" />
-                            Write Review
-                          </Button>
-                        )}
-                        {order.status === 'completed' && (
-                          <>
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              className="flex items-center gap-2"
-                              onClick={() => handleDeleteOrder(order)}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                              Delete
-                            </Button>
-                          </>
-                        )}
+                        {(() => {
+                          const myParticipation = order.participants.find(p => p.vendorId === user?.id);
+                          const hasReviewed = myParticipation?.hasReviewed === true; // Explicit boolean check
+                          
+                          if (order.status === 'completed' && !hasReviewed) {
+                            return (
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="flex items-center gap-2"
+                                onClick={() => handleWriteReview(order)}
+                                disabled={isSubmittingReview}
+                              >
+                                <Star className="w-4 h-4" />
+                                Write Review
+                              </Button>
+                            );
+                          } else if (order.status === 'completed' && hasReviewed) {
+                            return (
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="flex items-center gap-2"
+                                disabled
+                              >
+                                <Star className="w-4 h-4 text-green-600" />
+                                Review Submitted
+                              </Button>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                     </CardContent>
                   </Card>
@@ -1806,49 +1942,27 @@ const VendorDashboard = () => {
                       </button>
                     ))}
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    {reviewRating === 1 && 'Poor'}
-                    {reviewRating === 2 && 'Fair'}
-                    {reviewRating === 3 && 'Good'}
-                    {reviewRating === 4 && 'Very Good'}
-                    {reviewRating === 5 && 'Excellent'}
-                  </p>
                 </div>
 
-                {/* Review Comment */}
+                {/* Comment */}
                 <div className="space-y-2">
-                  <Label htmlFor="reviewComment" className="text-sm font-medium">Review Comment *</Label>
+                  <Label className="text-sm font-medium">Comment *</Label>
                   <textarea
-                    id="reviewComment"
+                    placeholder="Write your review here..."
                     value={reviewComment}
                     onChange={(e) => setReviewComment(e.target.value)}
-                    placeholder="Share your experience with this order. How was the quality, delivery, and overall service?"
-                    className="w-full min-h-[100px] p-3 border border-input rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
-                    maxLength={500}
+                    className="w-full p-2 border rounded-md"
+                    rows={4}
+                    required
                   />
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Share your honest feedback to help other vendors</span>
-                    <span>{reviewComment.length}/500</span>
-                  </div>
                 </div>
 
-                {/* Review Guidelines */}
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                  <h4 className="font-medium text-sm text-blue-800 mb-2">Review Guidelines</h4>
-                  <ul className="text-xs text-blue-700 space-y-1">
-                    <li>• Be honest and specific about your experience</li>
-                    <li>• Mention product quality, delivery time, and service</li>
-                    <li>• Avoid personal attacks or inappropriate language</li>
-                    <li>• Your review helps other vendors make informed decisions</li>
-                  </ul>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex gap-2 pt-2">
+                {/* Submit Button */}
+                <div className="flex justify-end">
                   <Button 
                     onClick={handleSubmitReview}
-                    disabled={isSubmittingReview || !reviewComment.trim()}
-                    className="flex-1"
+                    disabled={isSubmittingReview}
+                    className="flex items-center gap-2"
                   >
                     {isSubmittingReview ? (
                       <>
@@ -1858,18 +1972,6 @@ const VendorDashboard = () => {
                     ) : (
                       'Submit Review'
                     )}
-                  </Button>
-                  <Button 
-                    variant="outline"
-                    onClick={() => {
-                      setIsReviewModalOpen(false);
-                      setReviewOrder(null);
-                      setReviewRating(5);
-                      setReviewComment('');
-                    }}
-                    disabled={isSubmittingReview}
-                  >
-                    Cancel
                   </Button>
                 </div>
               </div>
@@ -1883,187 +1985,105 @@ const VendorDashboard = () => {
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Route className="w-5 h-5" />
+              <Truck className="w-5 h-5" />
               Track Delivery Route
             </DialogTitle>
             <DialogDescription>
               View the delivery route from supplier to your location
             </DialogDescription>
           </DialogHeader>
-          
           {trackingOrder && user && (() => {
             // Extract supplier location
             const locationMatch = trackingOrder.location.match(/\[([\d.-]+),([\d.-]+)\]/);
-            if (!locationMatch) return null;
-
+            if (!locationMatch) return <p className="text-red-600">Invalid supplier location.</p>;
             const supplierLat = parseFloat(locationMatch[1]);
             const supplierLng = parseFloat(locationMatch[2]);
             const supplierLocation = { lat: supplierLat, lng: supplierLng };
-
-            // Gather all locations: supplier + all vendors with a location
-            const allLocations = [
-              { ...supplierLocation, label: 'Supplier', color: 'red' },
-              ...trackingOrder.participants
-                .filter(p => p.vendorLocation)
-                .map(p => ({
-                  ...p.vendorLocation,
-                  label: p.vendorName,
-                  color: p.vendorId === user.id ? 'green' : 'blue'
-                }))
-            ];
-
-            // Calculate center point for map (average of all locations)
-            const avgLat = allLocations.reduce((sum, loc) => sum + loc.lat, 0) / allLocations.length;
-            const avgLng = allLocations.reduce((sum, loc) => sum + loc.lng, 0) / allLocations.length;
-
+            const myParticipation = trackingOrder.participants.find(p => p.vendorId === user.id);
+            if (!myParticipation || !myParticipation.vendorLocation) return <p className="text-red-600">No delivery location set for you.</p>;
+            const vendorLocation = myParticipation.vendorLocation;
+            const centerLat = (supplierLat + vendorLocation.lat) / 2;
+            const centerLng = (supplierLng + vendorLocation.lng) / 2;
+            const distance = calculateDistance(supplierLat, supplierLng, vendorLocation.lat, vendorLocation.lng);
             return (
-              <div className="space-y-4">
-                {/* Order Info */}
-                <div className="bg-muted/30 rounded-lg p-4">
-                  <h4 className="font-medium text-foreground mb-2">{trackingOrder.item}</h4>
-                  <p className="text-sm text-muted-foreground mb-2">by {trackingOrder.supplierName}</p>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Your Quantity:</span>
-                      <span className="font-medium ml-1">{trackingOrder.participants.find(p => p.vendorId === user.id)?.quantity} {trackingOrder.unit}</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  {/* Supplier Location Card */}
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="w-3 h-3 bg-red-500 rounded-full"></span>
+                      <span className="font-medium text-red-800">Your Location (Supplier)</span>
                     </div>
-                    <div>
-                      <span className="text-muted-foreground">Status:</span>
-                      <Badge variant={getStatusColor(trackingOrder.status)} className="ml-1">
-                        {trackingOrder.status.toUpperCase()}
-                      </Badge>
+                    <p className="text-sm text-red-700">{trackingOrder.location.replace(/\s*\[[\d.-]+,[\d.-]+\]\s*/, '').trim()}</p>
+                    <p className="text-xs text-red-600">Lat: {supplierLat.toFixed(4)}, Lng: {supplierLng.toFixed(4)}</p>
+                  </div>
+                  {/* Delivery Destinations Card */}
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="w-3 h-3 bg-green-500 rounded-full"></span>
+                      <span className="font-medium text-green-800">Delivery Destinations</span>
+                    </div>
+                    <p className="text-sm text-green-700">1 vendor location</p>
+                    <p className="text-xs text-green-600">All routes calculated and displayed on map</p>
+                  </div>
+                  {/* Route Summary Card */}
+                  <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Route className="w-4 h-4 text-orange-600" />
+                      <span className="font-medium text-orange-800">Route Summary</span>
+                    </div>
+                    <div className="flex justify-between text-sm text-orange-700">
+                      <span>{myParticipation.vendorName}:</span>
+                      <span>{distance.toFixed(1)} km</span>
                     </div>
                   </div>
                 </div>
-
-                {/* Route Info */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-3">
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                        <span className="font-medium text-red-800">Supplier Location</span>
-                      </div>
-                      <p className="text-sm text-red-700">{trackingOrder.location.replace(/\s*\[[\d.-]+,[\d.-]+\]\s*/, '').trim()}</p>
-                      <p className="text-xs text-red-600">Lat: {supplierLat.toFixed(4)}, Lng: {supplierLng.toFixed(4)}</p>
-                    </div>
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                        <span className="font-medium text-green-800">Your Delivery Location</span>
-                      </div>
-                      <p className="text-sm text-green-700">Your registered delivery address</p>
-                      <p className="text-xs text-green-600">Lat: {trackingOrder.participants.find(p => p.vendorId === user.id)?.vendorLocation?.lat?.toFixed(4)}, Lng: {trackingOrder.participants.find(p => p.vendorId === user.id)?.vendorLocation?.lng?.toFixed(4)}</p>
-                    </div>
-                    <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Route className="w-4 h-4 text-orange-600" />
-                        <span className="font-medium text-orange-800">Route Information</span>
-                      </div>
-                      {/* Optionally, show distance from supplier to each vendor */}
-                      {allLocations.slice(1).map((loc, idx) => (
-                        <p key={idx} className="text-sm text-orange-700">
-                          {loc.label}: {calculateDistance(supplierLat, supplierLng, loc.lat, loc.lng).toFixed(1)} km
-                        </p>
-                      ))}
-                    </div>
+                <div>
+                  <div className="mb-4 flex items-center gap-2">
+                    <Badge variant={getStatusColor(trackingOrder.status)}>
+                      Status {trackingOrder.status.toUpperCase()}
+                    </Badge>
                   </div>
-                  {/* Map */}
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">Delivery Route Map</Label>
-                    {isLoadingRoute ? (
-                      <div className="w-full h-[300px] bg-muted rounded-lg flex items-center justify-center">
-                        <div className="flex items-center gap-2">
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span className="text-sm text-muted-foreground">Loading route...</span>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="w-full h-[300px] rounded-lg overflow-hidden border">
-                        <MapContainer
-                          center={[avgLat, avgLng]}
-                          zoom={10}
-                          style={{ height: '100%', width: '100%' }}
-                        >
-                          <TileLayer
-                            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                          />
-                          {allLocations.filter(loc => loc.lat && loc.lng && !isNaN(loc.lat) && !isNaN(loc.lng)).map((loc, idx) => (
-                            <Marker
-                              key={idx}
-                              position={[loc.lat, loc.lng]}
-                              icon={createDivIcon(loc.color, loc.label[0])}
-                            >
-                              <Popup>{loc.label}</Popup>
-                            </Marker>
-                          ))}
-                        </MapContainer>
-                      </div>
-                    )}
+                  <div className="w-full h-[300px] rounded-lg overflow-hidden border mb-2">
+                    <MapContainer
+                      center={[centerLat, centerLng]}
+                      zoom={10}
+                      style={{ height: '100%', width: '100%' }}
+                    >
+                      <TileLayer
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                      />
+                      <Marker position={[supplierLat, supplierLng]} icon={RedIcon}>
+                        <Popup>Supplier Location</Popup>
+                      </Marker>
+                      <Marker position={[vendorLocation.lat, vendorLocation.lng]} icon={GreenIcon}>
+                        <Popup>Your Delivery Location</Popup>
+                      </Marker>
+                      {deliveryRoute.length > 1 && (
+                        <Polyline positions={deliveryRoute} color="blue" />
+                      )}
+                    </MapContainer>
                   </div>
+                  <Button
+                    variant="outline"
+                    className="w-full flex items-center gap-2 justify-center"
+                    onClick={() => {
+                      const gmapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${supplierLat},${supplierLng}&destination=${vendorLocation.lat},${vendorLocation.lng}`;
+                      window.open(gmapsUrl, '_blank');
+                    }}
+                  >
+                    <Navigation className="w-4 h-4" />
+                    Open in Google Maps
+                  </Button>
                 </div>
               </div>
             );
           })()}
         </DialogContent>
       </Dialog>
-
-      {/* Delete Order Confirmation Dialog */}
-      <Dialog open={!!deletingOrder} onOpenChange={() => setDeletingOrder(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-destructive">
-              <Trash2 className="w-5 h-5" />
-              Delete Order
-            </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete this order from your history? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          
-          {deletingOrder && (
-            <div className="space-y-4">
-              <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4">
-                <h4 className="font-medium text-destructive mb-2">{deletingOrder.item}</h4>
-                <p className="text-sm text-muted-foreground">
-                  by {deletingOrder.supplierName} • {deletingOrder.status.toUpperCase()}
-                </p>
-              </div>
-              
-              <div className="flex gap-2">
-                <Button 
-                  variant="destructive" 
-                  onClick={confirmDeleteOrder}
-                  disabled={isDeleting}
-                  className="flex-1"
-                >
-                  {isDeleting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Deleting...
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Delete Order
-                    </>
-                  )}
-                </Button>
-                <Button 
-                  variant="outline"
-                  onClick={() => setDeletingOrder(null)}
-                  disabled={isDeleting}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-     </div>
-   );
- };
+    </div>
+  );
+};
 
 export default VendorDashboard;

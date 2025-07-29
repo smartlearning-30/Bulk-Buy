@@ -11,10 +11,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import { useTheme } from '@/App';
+import { Sun, Moon } from 'lucide-react';
 
 const Header = () => {
   const { user, logout } = useFirebaseAuth();
   const [isHowItWorksOpen, setIsHowItWorksOpen] = useState(false);
+  const { theme, toggleTheme } = useTheme();
 
   if (!user) return null;
 
@@ -108,6 +111,17 @@ const Header = () => {
             </Badge>
           </div>
           
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={toggleTheme}
+            className="flex items-center gap-2"
+            aria-label="Toggle dark mode"
+          >
+            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            {theme === 'dark' ? 'Light' : 'Dark'}
+          </Button>
+
           <Button 
             variant="outline" 
             size="sm" 
